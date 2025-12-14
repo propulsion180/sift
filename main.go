@@ -20,6 +20,7 @@ import (
 	//	"golang.org/x/tools/go/analysis/passes/defers"
 	//
 	// "github.com/fredbi/uri"
+	"github.com/rwcarlsen/goexif/exif"
 )
 
 type ImageData struct {
@@ -97,7 +98,44 @@ func createThumb(imagePath string) string {
 	return filepath.Join(cacheDir, hex.EncodeToString(hash[:])+".jpg")
 }
 
-func generateThumbnail(srcPath string, maxSize int) (string, error) {
+func extractThumbnail(imagePath string) (string, error) {
+	thumbPath := createThumb(imagePath)
+
+	if _, err := os.Stat(thumbPath); err == nil {
+		return thumbPath, nil
+	}
+
+	f, err := os.Open(imagePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	x, err := exif.Decode(f)
+	if err != nil {
+		return "", fmt.Errorf("no EXIF data: %w", err)
+	}
+
+	thumbImg, err := x.JpegThumbnail()
+	if err != nil {
+		return "", fmt.Errorf("no embedded thumbnail: %w", err)
+	}
+
+	out, err := os.Create(thumbPath)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+
+	_, err = out.Write(thumbImg)
+	if err != nil {
+		return "", err
+	}
+
+	return thumbPath, nil
+}
+
+func generateThumbnailFromImage(srcPath string, maxSize int) (string, error) {
 	thumbPath := createThumb(srcPath)
 
 	if _, err := os.Stat(thumbPath); err == nil {
@@ -148,6 +186,19 @@ func generateThumbnail(srcPath string, maxSize int) (string, error) {
 
 }
 
+func generateThumbnail(srcPath string) (string, error) {
+	ext := strings.ToLower(filepath.Ext(srcPath))
+
+	if ext == ".jpg" || ext == ".jpeg" {
+		thumbPath, err := extractThumbnail(srcPath)
+		if err == nil {
+			return thumbPath, nil
+		}
+	}
+
+	return generateThumbnailFromImage(srcPath, 300)
+}
+
 func main() {
 	sift := app.New()
 
@@ -173,9 +224,6 @@ func main() {
 				dialog.ShowError(err, siftWindow)
 				return
 			}
-			if uri == nil {
-				return
-			}
 
 			//			var thumbnails []fyne.CanvasObject
 			//			for _, img := range images {
@@ -188,14 +236,21 @@ func main() {
 
 			go func() {
 				for i := range images {
-					thumbPath, err := generateThumbnail(images[i].Filepath, 300)
+					ext := strings.ToLower(filepath.Ext(images[i].Filepath))
+
+					if ext == ".jpg" || ext == ".jpeg" {
+						thumbPath, err := extractThumbnail(images[i].Filepath)
+						if err == nil {
+							images[i].ThumbPath = thumbPath
+							continue
+						}
+					}
+
+					thumbPath, err := generateThumbnailFromImage(images[i].Filepath, 300)
 					if err == nil {
 						images[i].ThumbPath = thumbPath
 					}
 
-					if i%10 == 0 {
-						//	current := i + 1
-					}
 				}
 			}()
 
@@ -238,7 +293,7 @@ func main() {
 								img.Refresh()
 
 								go func(imgData ImageData, imgWidget *canvas.Image) {
-									thumbPath, err := generateThumbnail(imgData.Filepath, 300)
+									thumbPath, err := generateThumbnail(imgData.Filepath)
 									if err == nil {
 										imgWidget.File = thumbPath
 										imgWidget.Refresh()
