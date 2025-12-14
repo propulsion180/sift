@@ -1,7 +1,11 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,14 +17,17 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+	//	"golang.org/x/tools/go/analysis/passes/defers"
+	//
 	// "github.com/fredbi/uri"
 )
 
 type ImageData struct {
-	Filepath string
-	RawPath  string
-	Format   string
-	Rating   int
+	Filepath  string
+	RawPath   string
+	ThumbPath string
+	Format    string
+	Rating    int
 }
 
 var imageExt = []string{
@@ -60,7 +67,7 @@ func loadFolder(foldep string) ([]ImageData, error) {
 		baseName := strings.TrimSuffix(file.Name(), ext)
 
 		if imagesmap[baseName] == nil {
-			imagesmap[baseName] = &ImageData{"", "", ext, 0}
+			imagesmap[baseName] = &ImageData{"", "", "", ext, 0}
 		}
 
 		if ext == ".jpg" || ext == ".jpeg" {
@@ -80,12 +87,65 @@ func loadFolder(foldep string) ([]ImageData, error) {
 	return images, nil
 }
 
-func createThumb(imagePath string) *canvas.Image {
+func createThumb(imagePath string) string {
 	fmt.Println(imagePath)
-	img := canvas.NewImageFromFile(imagePath)
-	img.FillMode = canvas.ImageFillContain
-	img.SetMinSize(fyne.NewSize(150, 150))
-	return img
+
+	cacheDir := filepath.Join(os.TempDir(), "sift-thumbs")
+	os.Mkdir(cacheDir, 0755)
+
+	hash := md5.Sum([]byte(imagePath))
+	return filepath.Join(cacheDir, hex.EncodeToString(hash[:])+".jpg")
+}
+
+func generateThumbnail(srcPath string, maxSize int) (string, error) {
+	thumbPath := createThumb(srcPath)
+
+	if _, err := os.Stat(thumbPath); err == nil {
+		return thumbPath, nil
+	}
+
+	file, err := os.Open(srcPath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	img, _, err := image.Decode(file)
+	if err != nil {
+		return "", err
+	}
+
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+
+	var newWidth, newHeight int
+	if width > height {
+		newWidth = maxSize
+		newHeight = height * maxSize / width
+	} else {
+		newHeight = maxSize
+		newWidth = width * maxSize / height
+	}
+
+	thumb := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+	for y := 0; y < newHeight; y++ {
+		for x := 0; x < newWidth; x++ {
+			srcX := x * width / newWidth
+			srcY := y * height / newHeight
+			thumb.Set(x, y, img.At(srcX, srcY))
+		}
+	}
+
+	out, err := os.Create(thumbPath)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
+
+	err = jpeg.Encode(out, thumb, &jpeg.Options{Quality: 85})
+	return thumbPath, err
+
 }
 
 func main() {
@@ -109,6 +169,13 @@ func main() {
 			}
 			folderLabel.SetText("Folder: " + uri.Path())
 			images, err = loadFolder(uri.Path())
+			if err != nil {
+				dialog.ShowError(err, siftWindow)
+				return
+			}
+			if uri == nil {
+				return
+			}
 
 			//			var thumbnails []fyne.CanvasObject
 			//			for _, img := range images {
@@ -118,7 +185,20 @@ func main() {
 			//
 			//			imageGrid = container.NewGridWithColumns(4, thumbnails...)
 			//			scrollContent := container.NewScroll(imageGrid)
-			imageCache := make(map[int]*canvas.Image)
+
+			go func() {
+				for i := range images {
+					thumbPath, err := generateThumbnail(images[i].Filepath, 300)
+					if err == nil {
+						images[i].ThumbPath = thumbPath
+					}
+
+					if i%10 == 0 {
+						//	current := i + 1
+					}
+				}
+			}()
+
 			list := widget.NewList(
 				func() int {
 					return (len(images) + 3) / 4
@@ -148,24 +228,24 @@ func main() {
 						img := row.Objects[i].(*canvas.Image)
 
 						if idx < len(images) {
-							if cached, ok := imageCache[idx]; ok {
-								img.File = cached.File
+							imaged := images[idx]
+
+							if imaged.ThumbPath != "" {
+								img.File = imaged.ThumbPath
 								img.Refresh()
 							} else {
 								img.File = ""
 								img.Refresh()
 
-								imagePath := images[idx].Filepath
-								imageIdx := idx
-								go func() {
-									loadedImg := canvas.NewImageFromFile(imagePath)
-									loadedImg.FillMode = canvas.ImageFillContain
-									imageCache[imageIdx] = loadedImg
-
-									img.File = imagePath
-									img.Refresh()
-								}()
+								go func(imgData ImageData, imgWidget *canvas.Image) {
+									thumbPath, err := generateThumbnail(imgData.Filepath, 300)
+									if err == nil {
+										imgWidget.File = thumbPath
+										imgWidget.Refresh()
+									}
+								}(imaged, img)
 							}
+
 						} else {
 							img.File = ""
 							img.Refresh()
