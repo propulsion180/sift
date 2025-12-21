@@ -17,11 +17,13 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+
 	//"golang.org/x/tools/go/analysis/passes/nilfunc"
 
 	//	"golang.org/x/tools/go/analysis/passes/defers"
 	//
 	// "github.com/fredbi/uri"
+
 	"github.com/rwcarlsen/goexif/exif"
 )
 
@@ -40,6 +42,8 @@ var imageExt = []string{
 	".orf",
 }
 
+var imageId string
+
 func extractExt(filename string) string {
 	return strings.ToLower((filepath.Ext(filename)))
 }
@@ -48,15 +52,43 @@ func isSupportedExt(ext string) bool {
 	return slices.Contains(imageExt, ext)
 }
 
-func loadFolder(foldep string) ([]ImageData, error) {
-	imagesmap := make(map[string]*ImageData)
+//go func() {
+//				for i := range images {
+//					ext := strings.ToLower(filepath.Ext(images[i].Filepath))
+//
+//					if ext == ".jpg" || ext == ".jpeg" {
+//						thumbPath, err := extractThumbnail(images[i].Filepath)
+//						if err == nil {
+//							images[i].ThumbPath = thumbPath
+//							continue
+//						}
+//					}
+//
+//					thumbPath, err := generateThumbnailFromImage(images[i].Filepath, 300)
+//					if err == nil {
+//						images[i].ThumbPath = thumbPath
+//					}
+//
+//				}
+//			}()
 
+func loadFolder(foldep string) ([]ImageData, error) {
 	files, err := os.ReadDir(foldep)
 	if err != nil {
 		return nil, err
 	}
 
+	validFiles := 0
 	for _, file := range files {
+		if !file.IsDir() && isSupportedExt(extractExt(file.Name())) && extractExt(file.Name()) != ".orf" {
+			validFiles++
+		}
+	}
+
+	imgChan := make(chan ImageData, validFiles)
+
+	for _, file := range files {
+
 		if file.IsDir() {
 			continue
 		}
@@ -66,27 +98,48 @@ func loadFolder(foldep string) ([]ImageData, error) {
 			continue
 		}
 
+		if ext == ".orf" {
+			continue
+		}
+
 		fullPath := filepath.Join(foldep, file.Name())
 		baseName := strings.TrimSuffix(file.Name(), ext)
+		rawName := baseName + ".orf"
+		rawPath := filepath.Join(foldep, rawName)
 
-		if imagesmap[baseName] == nil {
-			imagesmap[baseName] = &ImageData{"", "", "", ext, 0}
-		}
+		go func(path string, base string, raw string, extension string) {
 
-		if ext == ".jpg" || ext == ".jpeg" {
-			imagesmap[baseName].Filepath = fullPath
-		} else if ext == ".orf" {
-			imagesmap[baseName].RawPath = fullPath
-		}
+			imgData := ImageData{
+				Filepath:  path,
+				RawPath:   raw,
+				ThumbPath: "",
+				Format:    ext,
+				Rating:    0,
+			}
+
+			thumbPath, err := extractThumbnail(fullPath)
+			if err == nil {
+				imgData.ThumbPath = thumbPath
+			} else {
+				thumbPath, err := generateThumbnailFromImage(fullPath, 300)
+				if err == nil {
+					imgData.ThumbPath = thumbPath
+				}
+			}
+
+			imgChan <- imgData
+		}(fullPath, baseName, rawPath, ext)
 	}
 
 	var images []ImageData
-	for _, im := range imagesmap {
-		if im.Filepath != "" {
-			images = append(images, *im)
+	for i := 0; i < validFiles; i++ {
+		img := <-imgChan
+		if img.Filepath != "" {
+			images = append(images, img)
 		}
 	}
 
+	close(imgChan)
 	return images, nil
 }
 
@@ -201,6 +254,11 @@ func generateThumbnail(srcPath string) (string, error) {
 	return generateThumbnailFromImage(srcPath, 300)
 }
 
+func setCurrAndSwitchTo(image string, wdw fyne.Window, layout *fyne.Container) {
+	imageId = image
+	wdw.SetContent(layout)
+}
+
 func main() {
 	sift := app.New()
 
@@ -211,22 +269,11 @@ func main() {
 
 	folderLabel := widget.NewLabel("No folder selected")
 
-	//headerTop := container.NewBorder(
-	//	nil,
-	//	nil,
-	//	nil,
-	//	widget.NewLabel(""),
-	//	folderLabel,
-	//)
-
-	//header := container.NewVBox(
-	//	headerTop,
-	//	widget.NewSeparator(),
-	//)
-
 	var header *fyne.Container
 
 	var fullImageHeader *fyne.Container
+
+	var fullImageLayout *fyne.Container
 
 	selectFolderBtn := widget.NewButton("Select folder", func() {
 		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
@@ -244,54 +291,27 @@ func main() {
 				return
 			}
 
-			//			var thumbnails []fyne.CanvasObject
-			//			for _, img := range images {
-			//				thumb := createThumb(img.Filepath)
-			//				thumbnails = append(thumbnails, thumb)
-			//			}
-			//
-			//			imageGrid = container.NewGridWithColumns(4, thumbnails...)
-			//			scrollContent := container.NewScroll(imageGrid)
-
-			go func() {
-				for i := range images {
-					ext := strings.ToLower(filepath.Ext(images[i].Filepath))
-
-					if ext == ".jpg" || ext == ".jpeg" {
-						thumbPath, err := extractThumbnail(images[i].Filepath)
-						if err == nil {
-							images[i].ThumbPath = thumbPath
-							continue
-						}
-					}
-
-					thumbPath, err := generateThumbnailFromImage(images[i].Filepath, 300)
-					if err == nil {
-						images[i].ThumbPath = thumbPath
-					}
-
-				}
-			}()
-
 			list := widget.NewList(
 				func() int {
 					return (len(images) + 3) / 4
 				},
 				func() fyne.CanvasObject {
-					img1 := canvas.NewImageFromFile("")
-					img1.FillMode = canvas.ImageFillContain
-					img1.SetMinSize(fyne.NewSize(200, 200))
-					img2 := canvas.NewImageFromFile("")
-					img2.FillMode = canvas.ImageFillContain
-					img2.SetMinSize(fyne.NewSize(200, 200))
-					img3 := canvas.NewImageFromFile("")
-					img3.FillMode = canvas.ImageFillContain
-					img3.SetMinSize(fyne.NewSize(200, 200))
-					img4 := canvas.NewImageFromFile("")
-					img4.FillMode = canvas.ImageFillContain
-					img4.SetMinSize(fyne.NewSize(200, 200))
 
-					return container.NewGridWithColumns(4, img1, img2, img3, img4)
+					var thumbs []fyne.CanvasObject
+
+					for i := 0; i < 4; i++ {
+						img := canvas.NewImageFromFile("")
+						img.FillMode = canvas.ImageFillContain
+						img.SetMinSize(fyne.NewSize(200, 200))
+
+						btn := widget.NewButton("", nil)
+						btn.Importance = widget.LowImportance
+
+						stack := container.NewStack(img, btn)
+						thumbs = append(thumbs, stack)
+					}
+
+					return container.NewGridWithColumns(4, thumbs...)
 				},
 				func(id widget.ListItemID, obj fyne.CanvasObject) {
 					row := obj.(*fyne.Container)
@@ -299,7 +319,9 @@ func main() {
 
 					for i := 0; i < 4; i++ {
 						idx := startIndex + i
-						img := row.Objects[i].(*canvas.Image)
+						stackCont := row.Objects[i].(*fyne.Container)
+						img := stackCont.Objects[0].(*canvas.Image)
+						btn := stackCont.Objects[1].(*widget.Button)
 
 						if idx < len(images) {
 							imaged := images[idx]
@@ -319,6 +341,8 @@ func main() {
 									}
 								}(imaged, img)
 							}
+
+							btn.OnTapped = func() { setCurrAndSwitchTo(img.File, siftWindow, fullImageLayout) }
 
 						} else {
 							img.File = ""
@@ -385,7 +409,7 @@ func main() {
 		widget.NewLabel("test footer"),
 	)
 
-	fullImageLayout := container.NewBorder(
+	fullImageLayout = container.NewBorder(
 		fullImageHeader,
 		nil,
 		nil,
