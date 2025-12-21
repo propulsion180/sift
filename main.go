@@ -17,6 +17,8 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+	//"golang.org/x/tools/go/analysis/passes/nilfunc"
+
 	//	"golang.org/x/tools/go/analysis/passes/defers"
 	//
 	// "github.com/fredbi/uri"
@@ -209,6 +211,23 @@ func main() {
 
 	folderLabel := widget.NewLabel("No folder selected")
 
+	//headerTop := container.NewBorder(
+	//	nil,
+	//	nil,
+	//	nil,
+	//	widget.NewLabel(""),
+	//	folderLabel,
+	//)
+
+	//header := container.NewVBox(
+	//	headerTop,
+	//	widget.NewSeparator(),
+	//)
+
+	var header *fyne.Container
+
+	var fullImageHeader *fyne.Container
+
 	selectFolderBtn := widget.NewButton("Select folder", func() {
 		dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
 			if err != nil {
@@ -308,8 +327,9 @@ func main() {
 					}
 				},
 			)
+
 			mainlayout := container.NewBorder(
-				nil,
+				header,
 				nil,
 				nil,
 				nil,
@@ -319,12 +339,38 @@ func main() {
 		}, siftWindow)
 	})
 
-	header := container.NewBorder(
-		nil, nil,
-		nil,
-		selectFolderBtn,
-		folderLabel,
+	fullPageTestButton := widget.NewButton("Full Page", nil)
+	returnToGrid := widget.NewButton("< Back", nil)
+
+	header = container.NewVBox(
+		container.NewBorder(
+			nil,
+			nil,
+			fullPageTestButton,
+			selectFolderBtn,
+			folderLabel,
+		),
+		widget.NewSeparator(),
 	)
+
+	fullImageHeader = container.NewVBox(
+		container.NewBorder(
+			nil,
+			nil,
+			returnToGrid,
+			folderLabel,
+		),
+		widget.NewSeparator(),
+	)
+
+	//header.Objects[0] = container.NewBorder(
+	//	nil,
+	//	nil,
+	//	fullPageTestButton,
+	//	selectFolderBtn,
+	//	folderLabel,
+	//)
+	header.Refresh()
 
 	mainLayout := container.NewBorder(
 		header,
@@ -333,6 +379,27 @@ func main() {
 		nil,
 		nil,
 	)
+
+	fullImageFooter := container.NewVBox(
+		widget.NewSeparator(),
+		widget.NewLabel("test footer"),
+	)
+
+	fullImageLayout := container.NewBorder(
+		fullImageHeader,
+		nil,
+		nil,
+		nil,
+		fullImageFooter,
+	)
+
+	fullPageTestButton.OnTapped = func() {
+		siftWindow.SetContent(fullImageLayout)
+	}
+
+	returnToGrid.OnTapped = func() {
+		siftWindow.SetContent(mainLayout)
+	}
 
 	siftWindow.SetContent(mainLayout)
 	siftWindow.Resize(fyne.NewSize(800, 600))
