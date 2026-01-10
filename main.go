@@ -43,6 +43,7 @@ var imageExt = []string{
 }
 
 var imageId string
+var largeImage *canvas.Image
 
 func extractExt(filename string) string {
 	return strings.ToLower((filepath.Ext(filename)))
@@ -254,8 +255,10 @@ func generateThumbnail(srcPath string) (string, error) {
 	return generateThumbnailFromImage(srcPath, 300)
 }
 
-func setCurrAndSwitchTo(image string, wdw fyne.Window, layout *fyne.Container) {
-	imageId = image
+func setCurrAndSwitchTo(image *ImageData, wdw fyne.Window, layout *fyne.Container) {
+	imageId = image.Filepath
+	largeImage.File = image.Filepath
+	largeImage.Refresh()
 	wdw.SetContent(layout)
 }
 
@@ -268,6 +271,11 @@ func main() {
 	siftWindow := sift.NewWindow("Sift Main")
 
 	folderLabel := widget.NewLabel("No folder selected")
+
+	largeImage = canvas.NewImageFromFile("")
+ 	largeImage.FillMode = canvas.ImageFillContain
+
+
 
 	var header *fyne.Container
 
@@ -342,7 +350,7 @@ func main() {
 								}(imaged, img)
 							}
 
-							btn.OnTapped = func() { setCurrAndSwitchTo(img.File, siftWindow, fullImageLayout) }
+							btn.OnTapped = func() { setCurrAndSwitchTo(&imaged, siftWindow, fullImageLayout) }
 
 						} else {
 							img.File = ""
@@ -411,10 +419,10 @@ func main() {
 
 	fullImageLayout = container.NewBorder(
 		fullImageHeader,
-		nil,
-		nil,
-		nil,
 		fullImageFooter,
+		nil,
+		nil,
+		largeImage,
 	)
 
 	fullPageTestButton.OnTapped = func() {
@@ -422,6 +430,9 @@ func main() {
 	}
 
 	returnToGrid.OnTapped = func() {
+		imageId = ""
+		largeImage.File = ""
+		largeImage.Refresh()
 		siftWindow.SetContent(mainLayout)
 	}
 
